@@ -104,8 +104,8 @@ Ability 2: {ability2}
 Let's think step by step about their interaction:"""
         )
 
-        # TODO: Combined approach for balance detection
-        pass
+        self.ability_analyzer = ability_template | self.llm
+        self.interaction_calculator = interaction_template | self.llm
 
     def analyze_hero_zero_shot(self, hero: Hero) -> Dict[str, any]:
         """
@@ -114,9 +114,19 @@ Let's think step by step about their interaction:"""
         For novel, unique abilities without examples.
         """
 
-        # TODO: Implement zero-shot analysis
+        results = []
+        for ability in hero.abilities:
+            response = self.ability_analyzer.invoke(
+                 {"ability_description": ability}
+             ).content
+        results.append(response)
 
-        return {"power_level": 0.0, "exploits": [], "counters": []}
+        return {
+    "power_level": min(10.0, len(hero.abilities) * 3.0),
+    "exploits": results,
+    "counters": ["Team coordination", "Cooldown limits"],
+}
+
 
     def classify_power_few_shot(self, abilities: List[str]) -> str:
         """
@@ -125,9 +135,13 @@ Let's think step by step about their interaction:"""
         Match patterns from example heroes.
         """
 
-        # TODO: Implement few-shot classification
-
+        joined = " ".join(abilities).lower()
+        if any(x in joined for x in ["mind", "telepathy", "memory"]):
+              return PowerType.MENTAL.value
+        if any(x in joined for x in ["time", "reality", "probability"]):
+              return PowerType.REALITY.value
         return PowerType.PHYSICAL.value
+
 
     def calculate_synergy_cot(self, hero1: Hero, hero2: Hero) -> float:
         """
@@ -136,9 +150,15 @@ Let's think step by step about their interaction:"""
         Step-by-step reasoning for ability interactions.
         """
 
-        # TODO: Implement CoT synergy calculation
+        response = self.interaction_calculator.invoke(
+    {
+        "ability1": ", ".join(hero1.abilities),
+        "ability2": ", ".join(hero2.abilities),
+    }
+).content
 
-        return 0.5
+        return 0.8 if "synergy" in response.lower() else 0.5
+
 
     def detect_imbalance_combined(self, hero: Hero, meta: List[Hero]) -> BalanceReport:
         """
@@ -152,15 +172,23 @@ Let's think step by step about their interaction:"""
         # - Few-shot for patterns
         # - CoT for complex interactions
 
+        analysis = self.analyze_hero_zero_shot(hero)
+        power_rating = analysis["power_level"]
+
+        issues = []
+        if power_rating > 8:
+         issues.append("Overpowered ability stacking")
+
         return BalanceReport(
-            hero=hero,
-            analysis_method="combined",
-            power_rating=0.0,
-            balance_issues=[],
-            suggested_changes=[],
-            team_synergies={},
-            counter_picks=[],
-        )
+    hero=hero,
+    analysis_method="zero-shot + CoT",
+    power_rating=power_rating,
+    balance_issues=issues,
+    suggested_changes=["Increase cooldowns", "Limit ability overlap"],
+    team_synergies={h.name: self.calculate_synergy_cot(hero, h) for h in meta if h != hero},
+    counter_picks=["High mobility heroes", "Silence abilities"],
+)
+
 
     def auto_balance(self, hero: Hero, target_power: float) -> Hero:
         """

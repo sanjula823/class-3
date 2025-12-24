@@ -98,6 +98,19 @@ class PuzzleMaster:
                     "explanation": "An echo repeats sounds (speaks) and responds to sounds (hears) but has no physical form.",
                 },
                 # TODO: Add 2-3 more riddle examples
+                {
+                 "puzzle": "What has keys but can't open locks?",
+                 "solution": "A piano",
+                 "difficulty": "1",
+                 "explanation": "A piano has keys but they are musical, not for locks.",
+                },
+            {
+             "puzzle": "What runs but never walks?",
+             "solution": "A river",
+             "difficulty": "1",
+             "explanation": "A river flows continuously but does not walk.",
+            },
+
             ],
             "cipher": [
                 {
@@ -107,6 +120,19 @@ class PuzzleMaster:
                     "explanation": "Simple substitution cipher using alphabetical position numbers.",
                 },
                 # TODO: Add 2-3 more cipher examples
+                {
+                 "puzzle": "Decode: 3-1-20",
+                 "solution": "CAT",
+                 "difficulty": "2",
+                 "explanation": "Alphabet positions: C=3, A=1, T=20",
+                },
+                {
+                 "puzzle": "Decode: 19-15-19",
+                 "solution": "SOS",
+                 "difficulty": "2",
+                 "explanation": "Alphabet substitution cipher.",
+                },
+
             ],
             "logic": [
                 {
@@ -116,6 +142,13 @@ class PuzzleMaster:
                     "explanation": "Uses the property that incandescent bulbs generate heat when on.",
                 },
                 # TODO: Add 2-3 more logic examples
+                {
+                  "puzzle": "A man pushes his car to a hotel and tells the owner he's bankrupt. Why?",
+                  "solution": "He is playing Monopoly.",
+                  "difficulty": "3",
+                  "explanation": "The scenario matches a Monopoly game situation.",
+                },
+
             ],
             "pattern": [
                 {
@@ -125,6 +158,13 @@ class PuzzleMaster:
                     "explanation": "Pattern is n*(n+1): 1*2=2, 2*3=6, 3*4=12, 4*5=20, 5*6=30, 6*7=42",
                 },
                 # TODO: Add 2-3 more pattern examples
+                {
+                    "puzzle": "Complete the sequence: 1, 4, 9, 16, ?",
+                    "solution": "25",
+                    "difficulty": "2",
+                    "explanation": "Perfect squares: 1², 2², 3², 4², 5²",
+                },
+
             ],
         }
 
@@ -153,11 +193,12 @@ Explanation: {explanation}"""
 
         generation_prefix = """You are a master escape room designer.
         
-[TODO: Add instructions for:
-- Following the pattern of examples
-- Maintaining difficulty level
-- Ensuring unique solutions
-- Creating engaging narratives]
+Instructions:
+- Follow the structure and style of the examples.
+- Match the requested difficulty.
+- Ensure there is exactly one logical solution.
+- Keep puzzles engaging and theme-consistent.
+
 
 Here are examples of excellent puzzles:
 """
@@ -168,13 +209,37 @@ Theme: {theme}
 Generate a puzzle following the exact format of the examples. Output as JSON:"""
 
         # TODO: Set up the generation chain with FewShotPromptTemplate
-        self.generation_chain = None  # Replace with actual chain
+        self.generation_chain = FewShotPromptTemplate(
+        examples=[],
+        example_prompt=example_prompt,
+        prefix=generation_prefix,
+        suffix=generation_suffix,
+        input_variables=["puzzle_type", "difficulty", "theme"],
+      ) | self.llm | StrOutputParser()
+
 
         # TODO: Create validation chain with examples of valid/invalid puzzles
-        self.validation_chain = None  # Replace with actual chain
+        self.validation_chain = PromptTemplate.from_template(
+    """Check if this puzzle is solvable and fair.
+
+           Puzzle: {puzzle}
+           Solution: {solution}
+
+           Return JSON with:
+           is_solvable, has_unique_solution, difficulty_appropriate"""
+           ) | self.llm | StrOutputParser()
+
 
         # TODO: Create hint chain with examples of good hint progressions
-        self.hint_chain = None  # Replace with actual chain
+        self.hint_chain = PromptTemplate.from_template(
+             """Generate {num_hints} progressive hints.
+             Start subtle, end obvious.
+
+             Puzzle: {puzzle}
+             Solution: {solution}
+
+             Return JSON list of hints."""
+             ) | self.llm | StrOutputParser()
 
     def generate_puzzle(
         self,
@@ -198,17 +263,30 @@ Generate a puzzle following the exact format of the examples. Output as JSON:"""
         # Use generation_chain with selected examples
         # Parse JSON response and create Puzzle object
 
-        puzzle = Puzzle(
-            puzzle_text="",
-            solution="",
-            puzzle_type=puzzle_type.value,
-            difficulty=difficulty.value,
-            hints=[],
-            explanation="",
-            time_estimate=5,
-        )
+        examples = self.puzzle_examples.get(puzzle_type.value, [])
 
-        return puzzle
+        prompt = self.generation_chain.invoke(
+           {
+              "puzzle_type": puzzle_type.value,
+              "difficulty": difficulty.value,
+              "theme": theme,
+           }
+          )
+
+        start = prompt.find("{")
+        end = prompt.rfind("}") + 1
+        data = json.loads(prompt[start:end])
+
+        return Puzzle(
+             puzzle_text=data["puzzle"],
+             solution=data["solution"],
+             puzzle_type=puzzle_type.value,
+             difficulty=difficulty.value,
+             hints=data.get("hints", []),
+             explanation=data.get("explanation", ""),
+             time_estimate=5 + difficulty.value * 2,
+)
+        
 
     def validate_puzzle(self, puzzle: Puzzle) -> Dict[str, any]:
         """
@@ -232,7 +310,13 @@ Generate a puzzle following the exact format of the examples. Output as JSON:"""
             "suggestions": [],
         }
 
-        return validation
+        response = self.validation_chain.invoke(
+          {"puzzle": puzzle.puzzle_text, "solution": puzzle.solution}
+        )
+
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        return json.loads(response[start:end])
 
     def generate_hints(self, puzzle: Puzzle, num_hints: int = 3) -> List[str]:
         """
@@ -249,9 +333,18 @@ Generate a puzzle following the exact format of the examples. Output as JSON:"""
         # TODO: Use hint_chain with examples of good hint progressions
         # Hints should gradually reveal the solution
 
-        hints = []
+        response = self.hint_chain.invoke(
+    {
+        "puzzle": puzzle.puzzle_text,
+        "solution": puzzle.solution,
+        "num_hints": num_hints,
+    }
+)
 
-        return hints
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        return json.loads(response[start:end])
+
 
     def create_puzzle_sequence(
         self, theme: str, num_puzzles: int = 3, difficulty_curve: str = "increasing"
@@ -272,11 +365,23 @@ Generate a puzzle following the exact format of the examples. Output as JSON:"""
         # Solutions from early puzzles can be clues for later ones
         # Maintain narrative coherence
 
-        sequence = PuzzleSequence(
-            theme=theme, puzzles=[], final_solution="", narrative=""
+        puzzles = []
+        for i in range(num_puzzles):
+         puzzles.append(
+        self.generate_puzzle(
+            random.choice(list(PuzzleType)),
+            DifficultyLevel(i + 2),
+            theme,
         )
+    )
 
-        return sequence
+         return PuzzleSequence(
+             theme=theme,
+             puzzles=puzzles,
+             final_solution=puzzles[-1].solution if puzzles else "",
+             narrative=f"A sequence of puzzles themed around {theme}.",
+         )
+
 
     def adapt_difficulty(
         self, puzzle: Puzzle, target_difficulty: DifficultyLevel
@@ -296,9 +401,8 @@ Generate a puzzle following the exact format of the examples. Output as JSON:"""
         # Easier: add context, simplify language, provide partial solution
         # Harder: add red herrings, require multiple steps, use ambiguity
 
-        adapted_puzzle = puzzle
-
-        return adapted_puzzle
+        puzzle.difficulty = target_difficulty.value
+        return puzzle
 
 
 def test_puzzle_master():

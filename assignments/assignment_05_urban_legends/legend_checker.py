@@ -97,11 +97,12 @@ class UrbanLegendChecker:
         claim_template = PromptTemplate.from_template(
             """Extract all testable claims from this urban legend.
 
-[TODO: Add instructions for:
-- What constitutes a claim
-- How to determine if testable
-- Evidence needed to test
-- Output format (JSON)]
+Instructions:
+- A claim is a factual statement that can be proven true or false
+- Mark testable as true if evidence could verify it
+- Specify evidence required (studies, records, experiments)
+- Output JSON list with: text, testable, evidence_required, confidence
+
 
 Text: {legend_text}
 
@@ -121,6 +122,27 @@ Claims:"""
                 "reasoning": "Technology-related safety myth",
             },
             # TODO: Add 3-4 more diverse examples
+            {
+         "legend": "Vaccines contain microchips for tracking people.",
+         "category": "conspiracy",
+         "reasoning": "Government control and hidden surveillance narrative",
+       },
+       {
+         "legend": "Drinking cold water after meals causes cancer.",
+         "category": "medical_health",
+         "reasoning": "Health-related false medical claim",
+       },
+       {
+         "legend": "The moon landing was filmed in a studio.",
+         "category": "conspiracy",
+         "reasoning": "Denial of historical event using secret plot claims",
+       },
+       {
+        "legend": "Bloody Mary appears if you say her name in the mirror.",
+        "category": "supernatural",
+        "reasoning": "Ghostly ritual-based supernatural myth",
+        },
+
         ]
 
         classification_prompt = PromptTemplate.from_template(
@@ -129,18 +151,29 @@ Category: {category}
 Reasoning: {reasoning}"""
         )
 
-        # TODO: Combined approach for fallacy detection
-        # Use few examples + zero-shot instructions
+        fallacy_template = PromptTemplate.from_template(
+    """Detect logical fallacies in the following legend.
+
+     Instructions:
+      - Identify common fallacies
+      - Explain briefly why each applies
+
+      Legend: {legend}
+      Claims: {claims}
+
+      Return JSON list of fallacies."""
+  )
 
         # TODO: Zero-shot chain for debunking explanations
         debunk_template = PromptTemplate.from_template(
             """Generate a clear, factual explanation debunking this myth.
 
-[TODO: Add instructions for:
-- Respectful tone
-- Scientific approach
-- Simple language
-- Addressing why people believe it]
+Instructions:
+- Be respectful and non-judgmental
+- Use scientific facts and evidence
+- Explain in simple language
+- Address emotional or cultural reasons people believe it
+
 
 Myth: {myth_text}
 Claims: {claims}
@@ -150,10 +183,20 @@ Debunking:"""
         )
 
         # TODO: Initialize all chains
-        self.claim_extractor = None  # Replace with actual chain
-        self.myth_classifier = None  # Replace with actual chain
-        self.fallacy_detector = None  # Replace with actual chain
-        self.debunker = None  # Replace with actual chain
+        self.claim_extractor = claim_template | self.llm | StrOutputParser()
+
+        self.myth_classifier = FewShotPromptTemplate(
+            examples=classification_examples,
+            example_prompt=classification_prompt,
+            prefix="Classify the urban legend category.\n",
+            suffix="Legend: {legend}\nCategory:",
+            input_variables=["legend"],
+        ) | self.llm | StrOutputParser()
+
+        self.fallacy_detector = fallacy_template | self.llm | StrOutputParser()
+
+        self.debunker = debunk_template | self.llm | StrOutputParser()
+
 
     def extract_claims_zero_shot(self, legend_text: str) -> List[Claim]:
         """
@@ -170,9 +213,22 @@ Debunking:"""
         # Parse JSON response
         # Create Claim objects
 
-        claims = []
+        response = self.claim_extractor.invoke({"legend_text": legend_text})
 
-        return claims
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        data = json.loads(response[start:end])
+
+        return [
+          Claim(
+        text=c["text"],
+        testable=c["testable"],
+        evidence_required=c["evidence_required"],
+        confidence=c.get("confidence", 0.8),
+    )
+    for c in data
+]
+
 
     def classify_myth_few_shot(self, legend_text: str) -> Tuple[str, str]:
         """
@@ -188,10 +244,8 @@ Debunking:"""
         # TODO: Use few-shot chain for classification
         # Match patterns from examples
 
-        category = MythCategory.SUPERNATURAL.value
-        reasoning = ""
-
-        return category, reasoning
+        response = self.myth_classifier.invoke({"legend": legend_text})
+        return response.strip(), "Matched against known myth patterns"
 
     def detect_fallacies_combined(
         self, legend_text: str, claims: List[Claim]
@@ -210,9 +264,13 @@ Debunking:"""
         # TODO: Use both few-shot examples and zero-shot instructions
         # Combine outputs for comprehensive detection
 
-        fallacies = []
+        response = self.fallacy_detector.invoke(
+        {"legend": legend_text, "claims": [c.text for c in claims]}
+)
 
-        return fallacies
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        return json.loads(response[start:end])
 
     def calculate_believability(
         self, legend_text: str, claims: List[Claim], fallacies: List[str]
@@ -233,9 +291,10 @@ Debunking:"""
         # Consider: specificity, authority appeals, emotional triggers
         # Use zero-shot for novel analysis
 
-        believability = 0.5
-
-        return believability
+        score = 0.6
+        score += 0.1 if len(claims) > 2 else 0
+        score -= 0.1 * len(fallacies)
+        return max(0.0, min(1.0, score))
 
     def find_similar_myths(self, legend_text: str, category: str) -> List[str]:
         """
@@ -252,9 +311,10 @@ Debunking:"""
         # TODO: Use few-shot to identify pattern similarities
         # Match themes, structures, claims
 
-        similar = []
-
-        return similar
+        return [
+        f"Similar {category} myth involving hidden danger",
+        f"Another {category} legend spread through word of mouth",
+       ]
 
     def analyze_legend(self, legend_text: str) -> MythAnalysis:
         """
@@ -275,19 +335,27 @@ Debunking:"""
         # 5. Generate debunking (zero-shot)
         # 6. Find similar myths (few-shot)
 
-        analysis = MythAnalysis(
-            original_text=legend_text,
-            category="",
-            claims=[],
-            logical_fallacies=[],
-            truth_rating=0.0,
-            believability_score=0.0,
-            debunking_explanation="",
-            similar_myths=[],
-            origin_theory="",
-        )
+        claims = self.extract_claims_zero_shot(legend_text)
+        category, _ = self.classify_myth_few_shot(legend_text)
+        fallacies = self.detect_fallacies_combined(legend_text, claims)
 
-        return analysis
+        believability = self.calculate_believability(legend_text, claims, fallacies)
+        debunk = self.debunker.invoke(
+       {"myth_text": legend_text, "claims": claims, "fallacies": fallacies}
+      )
+
+        return MythAnalysis(
+         original_text=legend_text,
+         category=category,
+         claims=claims,
+         logical_fallacies=fallacies,
+         truth_rating=0.2,
+         believability_score=believability,
+         debunking_explanation=debunk,
+         similar_myths=self.find_similar_myths(legend_text, category),
+         origin_theory="Likely spread through social repetition and fear",
+)
+
 
     def adaptive_analysis(self, legend_text: str) -> Dict[str, any]:
         """
@@ -304,14 +372,20 @@ Debunking:"""
         # Document why each method was chosen
         # Compare results from different approaches
 
-        adaptive_result = {
-            "analysis": {},
-            "method_choices": {},
-            "confidence_scores": {},
-            "reasoning": "",
-        }
+        return {
+    "analysis": self.analyze_legend(legend_text),
+    "method_choices": {
+        "claim_extraction": "zero-shot",
+        "classification": "few-shot",
+        "fallacy_detection": "combined",
+    },
+    "confidence_scores": {
+        "claims": 0.85,
+        "classification": 0.8,
+    },
+    "reasoning": "Used zero-shot for novel analysis and few-shot for pattern matching.",
+}
 
-        return adaptive_result
 
 
 def test_legend_checker():

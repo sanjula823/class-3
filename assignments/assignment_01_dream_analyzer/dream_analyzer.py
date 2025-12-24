@@ -103,55 +103,65 @@ class DreamAnalyzer:
         # Hint: Be specific about what constitutes a symbol
         # Include instructions for meaning interpretation
         symbol_template = PromptTemplate.from_template(
-            """You are a dream symbol analyzer.
+            """You are an AI that extracts dream symbols.
 
-[TODO: Add instructions for:
-- What counts as a symbol
-- How to interpret meanings
-- Output format (JSON)
-- Handling abstract concepts]
+            Instructions:
+            - A symbol is any object, action, character, place, or abstract element with symbolic meaning.
+            - Interpret each symbol psychologically.
+            - Return a JSON array under key "symbols".
+            - Each symbol must include: symbol (string), meaning (string), frequency (int), significance (0-1).
+            - If meaning is unclear, infer the most likely interpretation.
 
-Dream description: {dream_text}
+            Dream description: {dream_text}
 
-JSON Output:"""
+            Return ONLY valid JSON."""
+
         )
 
         # TODO: Create emotion detection prompt
         emotion_template = PromptTemplate.from_template(
-            """Analyze the emotional journey in this dream.
+            """Analyze emotions present in the dream.
 
-[TODO: Add instructions for:
-- Types of emotions to detect
-- Emotional progression
-- Intensity levels
-- Output format]
+            Instructions:
+            - Detect emotional states felt by the dreamer.
+            - Use simple emotion words.
+            - Return JSON with keys:
+        emotions: list of strings
+        intensity: number from 0 to 10 representing overall emotional strength.
 
-Dream: {dream_text}
+        Dream: {dream_text}
 
-Emotions:"""
+        Return ONLY valid JSON."""
+
         )
 
         # TODO: Create insight generation prompt
         insight_template = PromptTemplate.from_template(
-            """Generate psychological insights from this dream.
+            """Generate a psychological dream analysis.
 
-[TODO: Add instructions for:
-- Lucidity score calculation
-- Theme identification
-- Pattern recognition
-- Insight generation]
+            Instructions:
+            - Identify major themes.
+            - Detect recurring patterns.
+            - Calculate lucidity_score from 0–10 based on awareness or control.
+            - Classify dream_type as: nightmare, lucid, or normal.
+            - Generate concise psychological insights.
 
-Dream: {dream_text}
-Symbols: {symbols}
-Emotions: {emotions}
+            Return JSON with keys:
+            themes, recurring_patterns, lucidity_score, dream_type, insights
 
-Analysis:"""
+            Dream: {dream_text}
+            Symbols: {symbols}
+            Emotions: {emotions}
+
+            Return ONLY valid JSON."""
+
         )
 
         # TODO: Set up the chains
-        self.symbol_chain = None  # Replace with actual chain
-        self.emotion_chain = None  # Replace with actual chain
-        self.insight_chain = None  # Replace with actual chain
+        self.symbol_chain = symbol_template | self.llm | StrOutputParser()
+        self.emotion_chain = emotion_template | self.llm | StrOutputParser()
+        self.insight_chain = insight_template | self.llm | StrOutputParser()
+
 
     def extract_symbols(self, dream_text: str) -> List[DreamSymbol]:
         """
@@ -167,9 +177,24 @@ Analysis:"""
         # TODO: Use symbol_chain to extract symbols
         # Parse JSON response and create DreamSymbol objects
 
-        symbols = []
+        response = self.symbol_chain.invoke({"dream_text": dream_text}).strip()
+
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        data = json.loads(response[start:end])
+
+        symbols = [
+            DreamSymbol(
+                symbol=s["symbol"],
+                meaning=s["meaning"],
+                frequency=s.get("frequency", 1),
+                significance=s.get("significance", 0.5),
+         )
+         for s in data.get("symbols", [])
+        ]
 
         return symbols
+ 
 
     def analyze_emotions(self, dream_text: str) -> Tuple[List[str], float]:
         """
@@ -185,10 +210,18 @@ Analysis:"""
         # TODO: Use emotion_chain to detect emotions
         # Calculate overall emotional intensity (0-10)
 
-        emotions = []
-        intensity = 5.0
+        response = self.emotion_chain.invoke({"dream_text": dream_text}).strip()
+
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        data = json.loads(response[start:end])
+
+
+        emotions = data.get("emotions", [])
+        intensity = float(data.get("intensity", 5.0))
 
         return emotions, intensity
+
 
     def calculate_lucidity(self, dream_text: str) -> float:
         """
@@ -204,9 +237,21 @@ Analysis:"""
         # TODO: Create a prompt to assess lucidity indicators
         # Look for: self-awareness, reality checks, control
 
-        lucidity_score = 5.0
+        prompt = PromptTemplate.from_template(
+           """Assess dream lucidity.
+
+        Instructions:
+        - Score 0–10 based on awareness, control, and realization of dreaming.
+        - Return ONLY a number.
+
+        Dream: {dream_text}"""
+        )
+
+        chain = prompt | self.llm | StrOutputParser()
+        lucidity_score = float(chain.invoke({"dream_text": dream_text}).strip())
 
         return lucidity_score
+
 
     def generate_insights(
         self, dream_text: str, symbols: List[DreamSymbol], emotions: List[str]
@@ -226,9 +271,21 @@ Analysis:"""
         # TODO: Use insight_chain to generate interpretation
         # Consider symbols, emotions, and themes
 
-        insights = "Dream analysis pending..."
+        response = self.insight_chain.invoke(
+    {
+        "dream_text": dream_text,
+        "symbols": [asdict(s) for s in symbols],
+        "emotions": emotions,
+    }
+  ).strip()
 
-        return insights
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        data = json.loads(response[start:end])
+
+        return data.get("insights", "")
+
+
 
     def analyze_dream(self, dream_text: str) -> DreamAnalysis:
         """
@@ -249,17 +306,33 @@ Analysis:"""
         # 5. Generate insights
         # 6. Create DreamAnalysis object
 
-        analysis = DreamAnalysis(
-            symbols=[],
-            emotions=[],
-            themes=[],
-            lucidity_score=0.0,
-            psychological_insights="",
-            recurring_patterns=[],
-            dream_type="normal",
-        )
+        symbols = self.extract_symbols(dream_text)
+        emotions, _ = self.analyze_emotions(dream_text)
+        lucidity = self.calculate_lucidity(dream_text)
 
-        return analysis
+        response = self.insight_chain.invoke(
+    {
+        "dream_text": dream_text,
+        "symbols": [asdict(s) for s in symbols],
+        "emotions": emotions,
+    }
+    ).strip()
+
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        data = json.loads(response[start:end])
+
+
+        return DreamAnalysis(
+            symbols=symbols,
+            emotions=emotions,
+            themes=data.get("themes", []),
+            lucidity_score=data.get("lucidity_score", lucidity),
+            psychological_insights=data.get("insights", ""),
+            recurring_patterns=data.get("recurring_patterns", []),
+            dream_type=data.get("dream_type", "normal"),
+        )
+      
 
     def compare_dreams(self, dream1: str, dream2: str) -> Dict[str, any]:
         """
@@ -277,14 +350,26 @@ Analysis:"""
         # Compare symbols, themes, emotions
         # Calculate similarity score
 
-        comparison = {
-            "similarity_score": 0.0,
-            "shared_symbols": [],
-            "shared_themes": [],
-            "pattern_analysis": "",
+        a1 = self.analyze_dream(dream1)
+        a2 = self.analyze_dream(dream2)
+
+        symbols1 = {s.symbol for s in a1.symbols}
+        symbols2 = {s.symbol for s in a2.symbols}
+
+        shared_symbols = list(symbols1 & symbols2)
+        shared_themes = list(set(a1.themes) & set(a2.themes))
+
+        score = (len(shared_symbols) + len(shared_themes)) / max(
+        len(symbols1 | symbols2), 1
+        )
+
+        return {
+            "similarity_score": round(score, 2),
+            "shared_symbols": shared_symbols,
+            "shared_themes": shared_themes,
+            "pattern_analysis": "Dreams share common symbolic or thematic elements.",
         }
 
-        return comparison
 
 
 def test_dream_analyzer():

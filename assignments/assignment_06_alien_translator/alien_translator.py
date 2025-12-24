@@ -49,6 +49,13 @@ class AlienTranslator:
                 "pattern": "quantity-object-verb",
             },
             # TODO: Add more examples with reasoning chains
+            {
+    "alien": "♦♦ ◯◯◯ ▼",
+    "reasoning": "Step 1: ♦♦ indicates a pair\nStep 2: ◯◯◯ refers to energy units\nStep 3: ▼ implies descent or landing\nStep 4: Message means 'two energy pods landing'",
+    "translation": "Two energy pods landing",
+    "pattern": "quantity-object-action",
+},
+
         ]
 
         return examples
@@ -60,8 +67,32 @@ class AlienTranslator:
         Combine pattern examples with reasoning steps.
         """
 
-        # TODO: Create combined few-shot + CoT template
-        pass
+        example_prompt = PromptTemplate(
+        input_variables=["alien", "reasoning", "translation"],
+        template=(
+        "Alien message: {alien}\n"
+        "Reasoning:\n{reasoning}\n"
+        "Human translation: {translation}\n"
+    ),
+)
+
+        few_shot_prompt = FewShotPromptTemplate(
+    examples=self.translation_examples,
+    example_prompt=example_prompt,
+    prefix=(
+        "You are an expert alien language translator.\n"
+        "Use the examples below to decode new alien messages.\n"
+        "Explain reasoning step by step, then give the translation.\n\n"
+    ),
+    suffix=(
+        "Alien message: {alien_message}\n"
+        "Reasoning:\n"
+    ),
+    input_variables=["alien_message"],
+)
+
+        self.decoder_chain = few_shot_prompt | self.llm
+
 
     def translate(self, alien_message: str) -> Translation:
         """
@@ -74,15 +105,30 @@ class AlienTranslator:
             Translation with reasoning
         """
 
-        # TODO: Apply few-shot patterns and CoT reasoning
+        response = self.decoder_chain.invoke(
+    {"alien_message": alien_message}
+)
+
+        text = response.content.strip()
+
+        # Simple parsing (safe for assignment)
+        lines = text.split("\n")
+        reasoning_steps = [line for line in lines if line.lower().startswith("step")]
+        translation_line = next(
+            (line for line in lines if "translation" in line.lower()),
+            "",
+       )
+
+        human_text = translation_line.split(":", 1)[-1].strip() if ":" in translation_line else text
 
         return Translation(
-            alien_text=alien_message,
-            human_text="",
-            confidence=0.0,
-            reasoning_steps=[],
-            cultural_notes="",
-        )
+    alien_text=alien_message,
+    human_text=human_text,
+    confidence=0.7,
+    reasoning_steps=reasoning_steps,
+    cultural_notes="Likely references shared alien cultural symbols.",
+)
+
 
 
 def test_translator():

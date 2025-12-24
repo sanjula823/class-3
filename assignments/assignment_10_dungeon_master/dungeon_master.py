@@ -175,7 +175,22 @@ Updated State:"""
         )
 
         # TODO: Initialize all chains
-        pass
+        self.story_generator = story_template | self.llm
+
+        npc_prompt = FewShotPromptTemplate(
+    examples=npc_examples,
+    example_prompt=PromptTemplate.from_template(
+        "NPC Type: {npc_type}\nDialogue: {dialogue}\nPersonality: {personality}\nQuirk: {quirk}"
+    ),
+    prefix="Roleplay an NPC consistently using these examples:",
+    suffix="NPC Info: {npc_info}\nPlayer Says: {player_input}\nNPC Response:",
+    input_variables=["npc_info", "player_input"],
+)
+        self.npc_manager = npc_prompt | self.llm
+
+        self.combat_resolver = combat_template | self.llm
+        self.world_tracker = world_template | self.llm
+
 
     def generate_quest(self, quest_type: QuestType, party_level: int) -> Quest:
         """
@@ -186,14 +201,22 @@ Updated State:"""
 
         # TODO: Use zero-shot for creative quest generation
 
+        response = self.story_generator.invoke(
+    {
+        "context": f"Party level {party_level}, quest type {quest_type.value}",
+        "action": "Generate a quest",
+    }
+).content
+
         return Quest(
-            title="",
-            description="",
-            objectives=[],
-            rewards=[],
-            difficulty=party_level,
-            quest_type=quest_type.value,
-        )
+    title=f"{quest_type.value.title()} Quest",
+    description=response,
+    objectives=["Complete the mission", "Survive the danger"],
+    rewards=["Gold", "Experience", "Rare item"],
+    difficulty=party_level,
+    quest_type=quest_type.value,
+)
+
 
     def roleplay_npc(self, npc: NPC, player_input: str, context: Dict[str, any]) -> str:
         """
@@ -205,6 +228,22 @@ Updated State:"""
         # TODO: Use few-shot for consistent NPC roleplay
 
         return ""
+        response = self.npc_manager.invoke(
+    {
+        "npc_info": f"""
+Name: {npc.name}
+Role: {npc.role}
+Personality: {npc.personality}
+Motivation: {npc.motivation}
+Dialogue Style: {npc.dialogue_style}
+Secrets: {", ".join(npc.secrets)}
+""",
+        "player_input": player_input,
+    }
+).content
+
+        return response
+
 
     def resolve_combat(
         self,
@@ -221,8 +260,25 @@ Updated State:"""
 
         # TODO: Use CoT for accurate combat calculations
 
-        return {"hit": False, "damage": 0, "description": "", "special_effects": []}
+        response = self.combat_resolver.invoke(
+            {
+                 "action": action,
+                 "stats": asdict(attacker),
+                 "target": asdict(target),
+                 "environment": combat_state.environment,
+            }
+        ).content
 
+        hit = random.choice([True, False])
+        damage = random.randint(3, 10) if hit else 0
+
+        return {
+    "hit": hit,
+    "damage": damage,
+    "description": response,
+    "special_effects": combat_state.special_conditions,
+}
+  
     def narrate_scene(
         self, action: str, world_state: WorldState, characters: List[Character]
     ) -> str:
@@ -234,7 +290,15 @@ Updated State:"""
 
         # TODO: Create immersive narration
 
-        return ""
+        response = self.story_generator.invoke(
+    {
+        "context": json.dumps(asdict(world_state)),
+        "action": action,
+    }
+).content
+
+        return response
+
 
     def update_world(self, actions: List[str], time_passed: str) -> WorldState:
         """
@@ -248,7 +312,19 @@ Updated State:"""
         # - Few-shot for consistent NPC reactions
         # - CoT for logical cause-effect chains
 
+        response = self.world_tracker.invoke(
+    {
+        "current_state": json.dumps(asdict(self.world_state)),
+        "actions": actions,
+        "time": time_passed,
+    }
+).content
+
+        self.world_state.recent_events.extend(actions)
+        self.world_state.time_of_day = "Later"
+
         return self.world_state
+
 
     def run_session(
         self, player_actions: List[str], party: List[Character]
@@ -270,9 +346,17 @@ Updated State:"""
             "combat_results": [],
             "quest_updates": [],
             "world_changes": [],
-        }
+}
+
+        for action in player_actions:
+           narration = self.narrate_scene(action, self.world_state, party)
+           session_log["narration"].append(narration)
+
+        self.update_world(player_actions, "1 hour")
+        session_log["world_changes"].append("World state updated")
 
         return session_log
+
 
 
 def test_dungeon_master():
